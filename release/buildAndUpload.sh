@@ -1,6 +1,12 @@
 #!/bin/bash
 set -eu
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/../buildscripts/verifyArtifact.sh"
+
+JF_SERVER_ID="${JF_SERVER_ID:-}"
+
 #function build(pkg, goos, goarch, exeName)
 build () {
   pkg="$1"
@@ -11,11 +17,13 @@ build () {
 
   CGO_ENABLED=0 jf go build -o "$exeName" -ldflags '-w -extldflags "-static" -X github.com/jfrog/frogbot/v2/utils.FrogbotVersion='"$version"
   chmod +x "$exeName"
+}
 
-  # Run verification after building plugin for the correct platform of this image.
-  if [[ "$pkg" = "frogbot-linux-386" ]]; then
-    verifyVersionMatching
-  fi
+verify_upload() {
+  local localFile="$1"
+  local destPath="$2"
+  echo "Verifying uploaded artifact ${localFile} using Artifactory file details ..."
+  verifyArtifact_file --file "${localFile}" --repo-path "${destPath}" --jf-cli
 }
 
 #function buildAndUpload(pkg, goos, goarch, fileExtension)
@@ -31,6 +39,7 @@ buildAndUpload () {
   destPath="$pkgPath/$version/$pkg/$exeName"
   echo "Uploading $exeName to $destPath ..."
   jf rt u "./$exeName" "$destPath"
+  verify_upload "./$exeName" "$destPath"
 }
 
 # Verify version provided in pipelines UI matches version in frogbot source code.
@@ -43,10 +52,8 @@ verifyVersionMatching () {
     exit $exitCode
   fi
 
-  # Get the version which is after the last space. (expected output to -v for example: "Frogbot version version v2.0.0")
   echo "Output: $res"
   builtVersion="${res##* }"
-  # Compare versions
   if [[ "$builtVersion" != "$version" ]]; then
     echo "Versions dont match. Provided: $version, Actual: $builtVersion"
     exit 1
@@ -57,8 +64,6 @@ verifyVersionMatching () {
 version="$1"
 pkgPath="ecosys-frogbot/v2"
 
-# Build and upload for every architecture.
-# Keep 'linux-386' first to prevent unnecessary uploads in case the built version doesn't match the provided one.
 buildAndUpload 'frogbot-linux-386' 'linux' '386' ''
 buildAndUpload 'frogbot-linux-amd64' 'linux' 'amd64' ''
 buildAndUpload 'frogbot-linux-s390x' 'linux' 's390x' ''
