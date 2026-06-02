@@ -47,12 +47,12 @@ func (yarn *YarnPackageHandler) UpdateDependency(vulnDetails *utils.Vulnerabilit
 func (yarn *YarnPackageHandler) updateDirectDependency(vulnDetails *utils.VulnerabilityDetails) (err error) {
 	wd, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("failed to get current working directory: %s", err.Error())
+		return fmt.Errorf("failed to get current working directory: %w", err)
 	}
 
 	workspace, err := findYarnWorkspaceRoot(wd)
 	if err != nil {
-		return
+		return fmt.Errorf("failed to find yarn workspace root: %w", err)
 	}
 
 	// Version detection uses the workspace root's .yarnrc.yml when in a workspace,
@@ -63,7 +63,7 @@ func (yarn *YarnPackageHandler) updateDirectDependency(vulnDetails *utils.Vulner
 	}
 	isYarn1, executableYarnVersion, err := isYarnV1Project(yarnrcSearchDir)
 	if err != nil {
-		return
+		return fmt.Errorf("failed to detect yarn version: %w", err)
 	}
 
 	var installationCommand string
@@ -72,7 +72,7 @@ func (yarn *YarnPackageHandler) updateDirectDependency(vulnDetails *utils.Vulner
 	if workspace != nil {
 		// Move to the workspace root so yarn can locate the lock file and workspace config.
 		if err = os.Chdir(workspace.rootDir); err != nil {
-			return fmt.Errorf("failed to change directory to workspace root '%s': %s", workspace.rootDir, err.Error())
+			return fmt.Errorf("failed to change directory to workspace root '%s': %w", workspace.rootDir, err)
 		}
 		defer func() {
 			err = errors.Join(err, os.Chdir(wd))
@@ -114,10 +114,10 @@ func (yarn *YarnPackageHandler) updateDirectDependency(vulnDetails *utils.Vulner
 
 	err = yarn.CommonPackageHandler.UpdateDependency(vulnDetails, installationCommand, extraArgs...)
 	if err != nil {
-		err = fmt.Errorf("running 'yarn %s' for '%s' failed:\n%s\nHint: The Yarn version that was used is: %s. If your project was built with a different major version of Yarn, please configure your CI runner to include it",
+		err = fmt.Errorf("running 'yarn %s' for '%s' failed: %w\nHint: The Yarn version that was used is: %s. If your project was built with a different major version of Yarn, please configure your CI runner to include it",
 			installationCommand,
 			vulnDetails.ImpactedDependencyName,
-			err.Error(),
+			err,
 			executableYarnVersion)
 	}
 	return
@@ -212,20 +212,20 @@ func getYarnVersionFromYarnrc(dir string) (string, error) {
 // isYarnV1Project reports whether the project uses Yarn v1.
 // It first tries to read the version from .yarnrc.yml in searchDir, then falls back
 // to the globally installed yarn binary.
-func isYarnV1Project(searchDir string) (isYarn1 bool, executableYarnVersion string, err error) {
-	executableYarnVersion, err = getYarnVersionFromYarnrc(searchDir)
+func isYarnV1Project(searchDir string) (bool, string, error) {
+	yarnVersion, err := getYarnVersionFromYarnrc(searchDir)
 	if err != nil {
-		return
+		return false, "", fmt.Errorf("failed to read .yarnrc.yml: %w", err)
 	}
-	if executableYarnVersion == "" {
+	if yarnVersion == "" {
 		// NOTICE: if the global yarn version is 1.x this will always return true even
 		// if the project targets a higher version. Use .yarnrc.yml yarnPath to avoid this.
-		executableYarnVersion, err = biUtils.GetVersion("yarn", "")
+		yarnVersion, err = biUtils.GetVersion("yarn", "")
 		if err != nil {
-			return
+			return false, "", fmt.Errorf("failed to get yarn version: %w", err)
 		}
 	}
-	log.Info("Using Yarn version: ", executableYarnVersion)
-	isYarn1 = version.NewVersion(executableYarnVersion).Compare(yarnV2Version) > 0
-	return
+	log.Info("Using Yarn version: ", yarnVersion)
+	isYarn1 := version.NewVersion(yarnVersion).Compare(yarnV2Version) > 0
+	return isYarn1, yarnVersion, nil
 }
